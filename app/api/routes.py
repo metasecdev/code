@@ -154,17 +154,17 @@ async def health_check():
 @app.get("/api/stats", response_model=StatsResponse)
 async def get_stats():
     """Get system statistics"""
-    if not db or not threat_matcher:
-        raise HTTPException(status_code=503, detail="System not initialized")
+    database = get_db()
+    matcher = get_threat_matcher()
 
     return StatsResponse(
-        alerts=db.get_alert_stats(),
-        indicators=db.get_indicator_counts(),
+        alerts=database.get_alert_stats(),
+        indicators=database.get_indicator_counts(),
         feeds={
-            "misp": threat_matcher.misp_feed.get_status(),
-            "pfblocker": threat_matcher.pfblocker_feed.get_status()
+            "misp": matcher.misp_feed.get_status(),
+            "pfblocker": matcher.pfblocker_feed.get_status()
         },
-        captures=threat_matcher.pcap_capture.get_active_captures()
+        captures=matcher.pcap_capture.get_active_captures()
     )
 
 
@@ -178,11 +178,10 @@ async def get_alerts(
     indicator_type: Optional[str] = Query(None)
 ):
     """Get alerts with optional filtering"""
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not initialized")
+    database = get_db()
 
-    alerts = db.get_alerts(limit=limit, offset=offset, severity=severity, indicator_type=indicator_type)
-    stats = db.get_alert_stats()
+    alerts = database.get_alerts(limit=limit, offset=offset, severity=severity, indicator_type=indicator_type)
+    stats = database.get_alert_stats()
 
     return AlertListResponse(
         total=stats["total"],
@@ -193,10 +192,9 @@ async def get_alerts(
 @app.get("/api/alerts/{alert_id}", response_model=AlertResponse)
 async def get_alert(alert_id: str):
     """Get a specific alert"""
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not initialized")
+    database = get_db()
 
-    alert = db.get_alert(alert_id)
+    alert = database.get_alert(alert_id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
 
@@ -206,10 +204,8 @@ async def get_alert(alert_id: str):
 @app.get("/api/alerts/stats")
 async def get_alert_stats():
     """Get alert statistics"""
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not initialized")
-
-    return db.get_alert_stats()
+    database = get_db()
+    return database.get_alert_stats()
 
 
 # --- PCAP Endpoints ---

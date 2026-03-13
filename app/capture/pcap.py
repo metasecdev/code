@@ -178,3 +178,187 @@ class DNSQueryMonitor:
                     break
 
         if indicator:
+            alert = Alert(
+                id=str(uuid.uuid4()),
+                timestamp=datetime.utcnow().isoformat(),
+                severity=self._get_severity(indicator.source),
+                source_ip="",  # Would need to correlate with network logs
+                indicator=domain,
+                indicator_type="domain",
+                feed_source=indicator.source,
+                rule_id=indicator.feed_id,
+                message=f"DNS query to blocked domain: {domain}"
+            )
+            self.db.insert_alert(alert)
+            logger.warning(f"Blocked DNS query: {domain} (matched {indicator.source})")
+            return alert
+
+        return None
+
+    def _get_severity(self, source: str) -> str:
+        """Get severity based on feed source"""
+        severity_map = {
+            "misp": "high",
+            "pfblocker": "medium",
+            "pfblocker_local": "medium"
+        }
+        return severity_map.get(source, "info")
+
+    def start_monitoring(self) -> None:
+        """Start DNS log monitoring"""
+        if self.running:
+            return
+
+        self.running = True
+        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.thread.start()
+        logger.info("Started DNS query monitoring")
+
+    def stop_monitoring(self) -> None:
+        """Stop DNS log monitoring"""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=5)
+        logger.info("Stopped DNS query monitoring")
+
+    def _monitor_loop(self) -> None:
+        """Main monitoring loop"""
+        while self.running:
+            try:
+                if os.path.exists(self.dns_log_path):
+                    with open(self.dns_log_path, "r") as f:
+                        f.seek(self.file_position)
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                # Parse DNS log line (assuming JSON format)
+                                try:
+                                    log_entry = json.loads(line)
+                                    if "query" in log_entry:
+                                        domain = log_entry["query"].get("name", "")
+                                        if domain:
+                                            self.match_domain(domain)
+                                except json.JSONDecodeError:
+                                    # Try plain text format
+                                    parts = line.split()
+                                    if len(parts) >= 2 and "A" in parts:
+                                        domain = parts[1]
+                                        if domain:
+                                            self.match_domain(domain)
+
+                        self.file_position = f.tell()
+            except Exception as e:
+                logger.error(f"Error monitoring DNS log: {e}")
+
+            threading.Event().wait(1)  # Check every second
+
+
+class PacketAnalyzer:
+    """Analyzes captured packets for indicators"""
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def analyze_pcap(self, pcap_path: str) -> List[Alert]:
+        """Analyze PCAP file for threat indicators"""
+        alerts = []
+
+        try:
+            # Try to use tshark for analysis
+            cmd = [
+                "tshark",
+                "-r", pcap_path,
+                "-T", "fields",
+                "-e", "ip.src",
+                "-e", "ip.dst",
+                "-e", "tcp.srcport",
+                "-e", "tcp.dstport",
+                "-e", "udp.srcport",
+                "-e", "udp.dstport",
+                "-e", "frame.protocols",
+                "-e", "dns.qry.name",
+                "-e", "http.request.uri",
+                "-Y", "ip"
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            for line in result.stdout.split("\n"):
+                if not line.strip():
+                    continue
+
+                fields = line.split("\t")
+                if len(fields) < 2:
+                    continue
+
+                src_ip = fields[0] if len(fields) > 0 else ""
+                dst_ip = fields[1] if len(fields) > 1 else ""
+
+                # Check destination IP against indicators
+                if dst_ip:
+                    indicator = self.db.check_indicator(dst_ip, "ip")
+                    if indicator:
+                        alert = Alert(
+                            id=str(uuid.uuid4()),
+                            timestamp=datetime.utcnow().isoformat(),
+                            severity="high",
+                            source_ip=src_ip,
+                            destination_ip=dst_ip,
+                            indicator=dst_ip,
+                            indicator_type="ip",
+                            feed_source=indicator.source,
+                            rule_id=indicator.feed_id,
+                            message=f"Connection to blocked IP: {dst_ip}"
+                        )
+                        alerts.append(alert)
+                        self.db.insert_alert(alert)
+
+                # Check DNS queries
+                dns_idx = 7
+                if len(fields) > dns_idx and fields[dns_idx]:
+                    domain = fields[dns_idx]
+                    indicator = self.db.check_indicator(domain, "domain")
+                    if indicator:
+                        alert = Alert(
+                            id=str(uuid.uuid4()),
+                            timestamp=datetime.utcnow().isoformat(),
+                            severity="high",
+                            source_ip=src_ip,
+                            destination_ip=dst_ip,
+                            indicator=domain,
+                            indicator_type="domain",
+                            feed_source=indicator.source,
+                            rule_id=indicator.feed_id,
+                            message=f"DNS query to blocked domain: {domain}"
+                        )
+                        alerts.append(alert)
+                        self.db.insert_alert(alert)
+
+                # Check HTTP URLs
+                http_idx = 8
+                if len(fields) > http_idx and fields[http_idx]:
+                    url = fields[http_idx]
+                    indicator = self.db.check_indicator(url, "url")
+                    if indicator:
+                        alert = Alert(
+                            id=str(uuid.uuid4()),
+                            timestamp=datetime.utcnow().isoformat(),
+                            severity="high",
+                            source_ip=src_ip,
+                            indicator=url,
+                            indicator_type="url",
+                            feed_source=indicator.source,
+                            rule_id=indicator.feed_id,
+                            message=f"HTTP request to blocked URL: {url}"
+                        )
+                        alerts.append(alert)
+                        self.db.insert_alert(alert)
+
+            logger.info(f"Analyzed {pcap_path}: found {len(alerts)} alerts")
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"PCAP analysis timeout: {pcap_path}")
+        except Exception as e:
+            logger.error(f"Failed to analyze PCAP: {e}")
+
+        return alerts

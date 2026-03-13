@@ -35,8 +35,29 @@ app.add_middleware(
 )
 
 # Global instances (will be initialized in main.py)
-db: Optional[Database] = None
-threat_matcher: Optional[ThreatMatcher] = None
+_db: Optional[Database] = None
+_threat_matcher: Optional[ThreatMatcher] = None
+
+
+def get_db() -> Database:
+    """Get database instance"""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    return _db
+
+
+def get_threat_matcher() -> ThreatMatcher:
+    """Get threat matcher instance"""
+    if _threat_matcher is None:
+        raise HTTPException(status_code=503, detail="System not initialized")
+    return _threat_matcher
+
+
+def init_app(database: Database, matcher: ThreatMatcher):
+    """Initialize global instances"""
+    global _db, _threat_matcher
+    _db = database
+    _threat_matcher = matcher
 
 
 # --- Pydantic Models ---

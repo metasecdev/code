@@ -1,0 +1,11 @@
+# Local pfBlocker-style blocklist
+# Add domains or IPs to block locally (one per line)
+# Lines starting with # are comments
+
+# Example malicious domains (for testing)
+# evil.example.com
+# malware.bad-site.net
+
+# Example malicious IPs (for testing)
+# 192.0.2.1
+# 203.0.113.50

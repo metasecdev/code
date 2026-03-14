@@ -399,7 +399,8 @@ class CIGTestSuite:
         print(f"⏭️  Skipped: {summary['skipped']}")
 
         success_rate = (summary['passed'] / summary['total_tests'] * 100) if summary['total_tests'] > 0 else 0
-        print(".1f"
+        print(f"Success Rate: {success_rate:.1f}%")
+
         # Component breakdown
         print("\n📊 COMPONENT BREAKDOWN:")
         for component, tests in self.results["components"].items():
